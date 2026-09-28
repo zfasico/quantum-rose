@@ -216,10 +216,10 @@
     /* 明暗：常态虚淡，坍缩凝实 */
     rose.material.opacity = 0.60 + 0.40 * observe;
     roseVol.material.opacity = 0.22 - 0.12 * observe;
-    /* 色彩：常态褪色如幽灵，坍缩还原鲜红（material.color 与顶点色相乘） */
+    /* 色彩：常态褪色如幽灵（绿色通道多保留，茎叶可辨），坍缩还原鲜红 */
     rose.material.color.setRGB(
       0.72 + 0.28 * observe,
-      0.64 + 0.36 * observe,
+      0.85 + 0.15 * observe,
       0.70 + 0.30 * observe);
     roseVol.material.color.copy(rose.material.color);
     /* 辉光：常态飘渺，坍缩克制 */
@@ -304,7 +304,7 @@
   var basePos, colArr, shellPos, nPhase, nFreq, ampA, rndA, delays, curPos;
   var TOTAL = 0;
 
-  fetch('./lib/rose_points.json')
+  fetch('./lib/rose_points.json?v=3')
     .then(function (r) { return r.json(); })
     .then(function (data) {
       var meta = data.meta;
