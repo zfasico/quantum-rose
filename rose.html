@@ -208,9 +208,22 @@
     var shellGlow = 0;
     var sizeBase = mobile ? 0.034 : 0.030;
     var volBase = mobile ? 0.062 : 0.054;
-    var shrink = 1 - 0.24 * observe;
-    rose.material.size = sizeBase * shrink;
-    roseVol.material.size = volBase * shrink;
+    var cloud = 1 - observe;                 /* 1 = 概率云态，0 = 坍缩实体 */
+    /* 位移：常态大幅涨落，坍缩时锐化收敛 */
+    var shrink = 1 - 0.30 * observe;
+    rose.material.size = sizeBase * shrink * (1 + 0.10 * cloud * Math.sin(t * 1.1));
+    roseVol.material.size = volBase * (1 + 0.40 * cloud);
+    /* 明暗：常态虚淡，坍缩凝实 */
+    rose.material.opacity = 0.60 + 0.40 * observe;
+    roseVol.material.opacity = 0.22 - 0.12 * observe;
+    /* 色彩：常态褪色如幽灵，坍缩还原鲜红（material.color 与顶点色相乘） */
+    rose.material.color.setRGB(
+      0.72 + 0.28 * observe,
+      0.64 + 0.36 * observe,
+      0.70 + 0.30 * observe);
+    roseVol.material.color.copy(rose.material.color);
+    /* 辉光：常态飘渺，坍缩克制 */
+    bloom.strength = (mobile ? 0.62 : 0.72) - 0.18 * observe;
 
     for (var i = 0; i < LIVE; i++) {
       var i3 = i * 3;
@@ -219,9 +232,9 @@
       var lp = clamp01((observe * 1.7 - delays[i]) / 0.9);
       var collapse = lp * lp * (3 - 2 * lp); /* smoothstep */
 
-      /* 常态概率云微涨落（花形始终清晰可读）；坍缩时完全锐化 */
-      var amp = ampA[i] * (1 - 0.94 * collapse);
-      var drift = 0.018 * (1 - collapse);
+      /* 常态概率云大幅涨落（朦胧但花形可辨）；坍缩时完全锐化 */
+      var amp = ampA[i] * (1 - 0.97 * collapse);
+      var drift = 0.05 * (1 - collapse);
       var px = basePos[i3] + amp * Math.sin(t * nFreq[i3] + nPhase[i3])
         + drift * Math.sin(t * 0.37 + nPhase[i3] * 1.7);
       var py = basePos[i3 + 1] + amp * Math.sin(t * nFreq[i3 + 1] + nPhase[i3 + 1])
@@ -321,7 +334,7 @@
         nFreq[i3] = 0.6 + rand() * 1.7;
         nFreq[i3 + 1] = 0.6 + rand() * 1.7;
         nFreq[i3 + 2] = 0.6 + rand() * 1.7;
-        ampA[i] = 0.010 + rand() * 0.022;
+        ampA[i] = 0.020 + rand() * 0.045;
         rndA[i] = rand();
       }
 
