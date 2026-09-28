@@ -1,0 +1,454 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#07010a">
+<meta name="format-detection" content="telephone=no">
+<title>♥ 心动</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body {
+    height: 100%;
+    overflow: hidden;
+    background: #07010a;
+    overscroll-behavior: none;
+  }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC",
+      "HarmonyOS Sans SC", "MiSans", "Noto Sans CJK SC",
+      "Microsoft YaHei", sans-serif;
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
+  }
+  canvas#heart {
+    position: fixed;
+    inset: 0;
+    display: block;
+  }
+  /* ---------- 纯视觉模式：无文字 ---------- */
+</style>
+</head>
+<body>
+<canvas id="heart"></canvas>
+
+<script>
+'use strict';
+/*
+ * ♥ 心动 · Dynamic Heart
+ * 基于经典开源粒子心形算法优化重制：
+ *  - Roman Cortes 的 1KB JavaScript 心形（粒子拖尾追踪 + 非均匀心跳节律），
+ *    参考实现见 codingstella.com 收录版本
+ *  - 博客园 @吾不图 整理的「跳动爱心」粒子喷射思路
+ * 本版本增强：
+ *  1. devicePixelRatio 高清渲染（原版手机端 0.5 倍降采样导致模糊）
+ *  2. 心形尺寸按屏幕自适应缩放
+ *  3. 轮廓三层配色（深绯 / 玫红 / 熔金）+ lighter 叠加辉光
+ *  4. 星空与流星氛围层
+ *  5. 触摸爆发粒子 + 双涟漪 + 心跳增益 + 震动反馈
+ *  6. 帧率自适应降级、页面隐藏暂停省电
+ *  7. 零依赖单文件、iOS 安全区适配
+ */
+(function () {
+  var TAU = Math.PI * 2;
+  var rand = Math.random;
+
+  /* ---------------- DOM 与设备 ---------------- */
+  var canvas = document.getElementById('heart');
+  var ctx = canvas.getContext('2d', { alpha: false });
+  var mobile = /android|webos|iphone|ipad|ipod|blackberry|iemobile|opera mini/i
+    .test((navigator.userAgent || '').toLowerCase());
+  var W = 0, H = 0, DPR = 1;
+  var u = 1, cx = 0, cy = 0;          // 心形缩放因子与中心
+
+  /* ---------------- 心形几何（Roman Cortes 参数方程） ---------------- */
+  var LAYERS = [
+    { k: 210, sy: 13, hue: 350, sat: 92,  li: 45 },  // 外环 · 深绯
+    { k: 150, sy: 9,  hue: 337, sat: 96,  li: 58 },  // 中环 · 玫红
+    { k: 90,  sy: 5,  hue: 14,  sat: 100, li: 66 }   // 内环 · 熔金心火
+  ];
+  var pointsOrigin = [];   // 轮廓点（三层）
+  var layerOf = [];        // 每个轮廓点所属层
+  var targetPoints = [];
+  var heartPointsCount = 0;
+  var dr = mobile ? 0.14 : 0.085;      // 轮廓点角密度
+
+  function heartPos(rad) {
+    return [
+      Math.pow(Math.sin(rad), 3),
+      -(15 * Math.cos(rad) - 5 * Math.cos(2 * rad) -
+        2 * Math.cos(3 * rad) - Math.cos(4 * rad))
+    ];
+  }
+
+  function buildPoints() {
+    pointsOrigin.length = 0;
+    layerOf.length = 0;
+    for (var li = 0; li < LAYERS.length; li++) {
+      var L = LAYERS[li];
+      for (var t = 0; t < TAU; t += dr) {
+        var p = heartPos(t);
+        pointsOrigin.push([p[0] * L.k, p[1] * L.sy]);
+        layerOf.push(li);
+      }
+    }
+    heartPointsCount = pointsOrigin.length;
+  }
+
+  function layoutHeart() {
+    u = Math.min(W, H) / 600;
+    if (u > 2.2) u = 2.2;
+    cx = W / 2;
+    cy = H / 2 - 6 * u;
+  }
+
+  function updateTargets(scale) {
+    for (var i = 0; i < heartPointsCount; i++) {
+      var p = pointsOrigin[i];
+      targetPoints[i] = [cx + p[0] * scale, cy + p[1] * scale];
+    }
+  }
+
+  /* ---------------- 粒子群 ---------------- */
+  var traceCount = mobile ? 26 : 55;
+  var traceK = 0.4;
+  var timeDelta = 0.011;
+  var particles = [];
+
+  function makeParticles() {
+    particles = [];
+    for (var i = 0; i < heartPointsCount; i++) {
+      var x = rand() * W, y = rand() * H;
+      var p = {
+        vx: 0, vy: 0,
+        speed: rand() + 5,
+        q: ~~(rand() * heartPointsCount),
+        D: 2 * (i % 2) - 1,
+        force: 0.2 * rand() + 0.7,
+        colHalo: null, colTrail: null, colCore: null,
+        trace: []
+      };
+      for (var k = 0; k < traceCount; k++) {
+        p.trace.push({ x: x, y: y });
+      }
+      particles.push(p);
+    }
+  }
+
+  function refreshColor(p) {
+    var L = LAYERS[layerOf[p.q]];
+    p.colHalo = 'hsla(' + L.hue + ',' + L.sat + '%,' + L.li + '%,.08)';
+    p.colTrail = 'hsla(' + L.hue + ',' + L.sat + '%,' + L.li + '%,.5)';
+    p.colCore = 'hsla(' + L.hue + ',' + (L.sat - 10) + '%,' +
+      Math.min(L.li + 30, 92) + '%,.9)';
+  }
+
+  /* ---------------- 星空 / 流星 / 触摸特效 ---------------- */
+  var stars = [], meteors = [], sparks = [], ripples = [];
+  var nextMeteor = 0;
+
+  function buildStars() {
+    stars = [];
+    var n = Math.round(W * H / 9000);
+    if (n > 220) n = 220;
+    var palette = ['255,255,255', '190,210,255', '255,195,210'];
+    for (var i = 0; i < n; i++) {
+      stars.push({
+        x: rand() * W,
+        y: rand() * H,
+        r: 0.4 + rand() * 1.1,
+        p: rand() * TAU,
+        sp: 0.3 + rand() * 0.9,
+        c: palette[(rand() * palette.length) | 0]
+      });
+    }
+  }
+
+  function drawStars(now) {
+    for (var i = 0; i < stars.length; i++) {
+      var s = stars[i];
+      var tw = 0.3 + 0.7 * Math.abs(Math.sin(now * 0.0006 * s.sp + s.p));
+      ctx.fillStyle = 'rgba(' + s.c + ',' + (tw * 0.75).toFixed(3) + ')';
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, s.r, 0, TAU);
+      ctx.fill();
+    }
+  }
+
+  function spawnMeteor() {
+    var sp = 6 + rand() * 5;
+    meteors.push({
+      x: W * (0.15 + rand() * 0.7),
+      y: -20 - rand() * H * 0.15,
+      vx: (rand() < 0.5 ? 1 : -1) * sp * 0.6,
+      vy: sp,
+      life: 1
+    });
+  }
+
+  function drawMeteors(now, ts) {
+    if (now > nextMeteor) {
+      spawnMeteor();
+      nextMeteor = now + 4000 + rand() * 6000;
+    }
+    ctx.lineCap = 'round';
+    for (var i = meteors.length; i--;) {
+      var m = meteors[i];
+      m.x += m.vx * ts;
+      m.y += m.vy * ts;
+      m.life -= 0.016 * ts;
+      if (m.life <= 0 || m.y > H + 60) {
+        meteors.splice(i, 1);
+        continue;
+      }
+      var tail = 14;
+      var gx = m.x - m.vx * tail, gy = m.y - m.vy * tail;
+      var grad = ctx.createLinearGradient(m.x, m.y, gx, gy);
+      grad.addColorStop(0, 'rgba(255,225,238,' + (0.85 * m.life).toFixed(3) + ')');
+      grad.addColorStop(1, 'rgba(255,225,238,0)');
+      ctx.strokeStyle = grad;
+      ctx.lineWidth = 1.4;
+      ctx.beginPath();
+      ctx.moveTo(m.x, m.y);
+      ctx.lineTo(gx, gy);
+      ctx.stroke();
+    }
+  }
+
+  function onTouch(x, y) {
+    beatBoost = Math.min(beatBoost + 0.12, 0.25);
+    ripples.push({ x: x, y: y, r: 4, a: 0.75 });
+    var n = 22 + ((rand() * 10) | 0);
+    for (var i = 0; i < n; i++) {
+      var ang = rand() * TAU;
+      var sp = 1.2 + rand() * 4.2;
+      sparks.push({
+        x: x, y: y,
+        vx: Math.cos(ang) * sp,
+        vy: Math.sin(ang) * sp - 0.8,
+        life: 1,
+        decay: 0.010 + rand() * 0.022,
+        hue: rand() < 0.72 ? 338 : 18,
+        r: 0.8 + rand() * 1.8
+      });
+    }
+    if (navigator.vibrate) {
+      try { navigator.vibrate(12); } catch (e) {}
+    }
+  }
+
+  function drawSparks(ts) {
+    for (var i = sparks.length; i--;) {
+      var s = sparks[i];
+      s.x += s.vx * ts;
+      s.y += s.vy * ts;
+      s.vy += 0.05 * ts;
+      s.vx *= Math.pow(0.965, ts);
+      s.vy *= Math.pow(0.985, ts);
+      s.life -= s.decay * ts;
+      if (s.life <= 0) {
+        sparks.splice(i, 1);
+        continue;
+      }
+      ctx.fillStyle = 'hsla(' + s.hue + ',100%,' +
+        (62 + 18 * s.life).toFixed(0) + '%,' + (s.life * 0.9).toFixed(3) + ')';
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, s.r * (0.5 + s.life * 0.7), 0, TAU);
+      ctx.fill();
+      ctx.fillStyle = 'hsla(' + s.hue + ',100%,60%,' + (s.life * 0.16).toFixed(3) + ')';
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, s.r * 3.2, 0, TAU);
+      ctx.fill();
+    }
+  }
+
+  function drawRipples(ts) {
+    for (var i = ripples.length; i--;) {
+      var r = ripples[i];
+      r.r += (46 - r.r) * 0.06 * ts + 0.6 * ts;
+      r.a *= Math.pow(0.94, ts);
+      if (r.a < 0.02) {
+        ripples.splice(i, 1);
+        continue;
+      }
+      ctx.strokeStyle = 'rgba(255,140,170,' + r.a.toFixed(3) + ')';
+      ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      ctx.arc(r.x, r.y, r.r, 0, TAU);
+      ctx.stroke();
+      ctx.strokeStyle = 'rgba(255,195,215,' + (r.a * 0.5).toFixed(3) + ')';
+      ctx.beginPath();
+      ctx.arc(r.x, r.y, r.r * 0.62, 0, TAU);
+      ctx.stroke();
+    }
+  }
+
+  /* ---------------- 心形粒子步进与绘制 ---------------- */
+  function stepHeart(ts) {
+    for (var i = particles.length; i--;) {
+      var p = particles[i];
+      var q = targetPoints[p.q];
+      var head = p.trace[0];
+      var dx = head.x - q[0];
+      var dy = head.y - q[1];
+      var len = Math.sqrt(dx * dx + dy * dy);
+
+      if (len < 10) {
+        /* 靠近目标点后随机换位 —— 保留原版"心壁漫游"算法 */
+        if (rand() < 0.05) {
+          p.q = ~~(rand() * heartPointsCount);
+        } else {
+          if (rand() < 0.01) p.D *= -1;
+          p.q = (p.q + p.D + heartPointsCount) % heartPointsCount;
+        }
+        p.colHalo = null; /* 换层后刷新配色 */
+      }
+      if (len < 1e-4) len = 1e-4;
+
+      p.vx += -dx / len * p.speed * ts;
+      p.vy += -dy / len * p.speed * ts;
+      head.x += p.vx * ts;
+      head.y += p.vy * ts;
+      var f = Math.pow(p.force, ts);
+      p.vx *= f;
+      p.vy *= f;
+
+      var tk = traceK * ts;
+      for (var k = 0; k < p.trace.length - 1;) {
+        var T = p.trace[k];
+        var N = p.trace[++k];
+        N.x -= tk * (N.x - T.x);
+        N.y -= tk * (N.y - T.y);
+      }
+
+      if (!p.colHalo) refreshColor(p);
+
+      /* 头部光晕 */
+      ctx.fillStyle = p.colHalo;
+      ctx.fillRect(head.x - 2.4, head.y - 2.4, 4.8, 4.8);
+      /* 彗尾 */
+      ctx.fillStyle = p.colTrail;
+      for (k = 1; k < p.trace.length; k++) {
+        ctx.fillRect(p.trace[k].x, p.trace[k].y, 1, 1);
+      }
+      /* 白热核心 */
+      ctx.fillStyle = p.colCore;
+      ctx.fillRect(head.x - 0.8, head.y - 0.8, 1.6, 1.6);
+    }
+  }
+
+  /* ---------------- 主循环 ---------------- */
+  var time = rand() * TAU;
+  var beatBoost = 0;
+  var rafId = 0;
+  var lastT = performance.now();
+  var timeScale = 1;
+  var fpsAcc = 0, fpsN = 0, degraded = false;
+
+  function loop() {
+    rafId = requestAnimationFrame(loop);
+    var now = performance.now();
+    var dt = now - lastT;
+    lastT = now;
+    if (dt > 66) dt = 66;
+    if (dt <= 0) dt = 16.7;
+    timeScale = dt / 16.667;
+
+    /* 帧率自适应降级 */
+    if (!degraded) {
+      fpsAcc += dt;
+      fpsN++;
+      if (fpsN >= 150) {
+        if (fpsAcc / fpsN > 26) { /* 平均低于 ~38fps */
+          degraded = true;
+          var cut = Math.max(8, Math.round(traceCount * 0.55));
+          for (var d = 0; d < particles.length; d++) {
+            if (particles[d].trace.length > cut) {
+              particles[d].trace.length = cut;
+            }
+          }
+          traceCount = cut;
+        }
+        fpsAcc = 0;
+        fpsN = 0;
+      }
+    }
+
+    /* 非均匀心跳节律：收缩快、舒张慢（原版精髓），叠加触摸增益 */
+    var n = -Math.cos(time);
+    var beat = (1 + n) * 0.5 + beatBoost;
+    updateTargets(beat);
+    time += ((Math.sin(time) < 0) ? 9 : (n > 0.8 ? 0.2 : 1)) *
+      timeDelta * timeScale;
+    beatBoost *= 0.94;
+
+    /* 半透明擦除形成拖尾 */
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.fillStyle = 'rgba(7,1,10,.12)';
+    ctx.fillRect(0, 0, W, H);
+
+    drawStars(now);
+    drawMeteors(now, timeScale);
+
+    ctx.globalCompositeOperation = 'lighter';
+    stepHeart(timeScale);
+    drawSparks(timeScale);
+    drawRipples(timeScale);
+  }
+
+  /* ---------------- 尺寸与生命周期 ---------------- */
+  function resize() {
+    DPR = Math.min(window.devicePixelRatio || 1, 2);
+    W = window.innerWidth;
+    H = window.innerHeight;
+    canvas.width = Math.round(W * DPR);
+    canvas.height = Math.round(H * DPR);
+    canvas.style.width = W + 'px';
+    canvas.style.height = H + 'px';
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    ctx.fillStyle = '#07010a';
+    ctx.fillRect(0, 0, W, H);
+    buildStars();
+    layoutHeart();
+  }
+
+  var resizeTimer = 0;
+  window.addEventListener('resize', function () {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(resize, 150);
+  });
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener('resize', function () {
+      clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(resize, 150);
+    });
+  }
+
+  document.addEventListener('visibilitychange', function () {
+    if (document.hidden) {
+      cancelAnimationFrame(rafId);
+    } else {
+      lastT = performance.now();
+      cancelAnimationFrame(rafId);
+      rafId = requestAnimationFrame(loop);
+    }
+  });
+
+  window.addEventListener('pointerdown', function (e) {
+    onTouch(e.clientX, e.clientY);
+  }, { passive: true });
+
+  /* ---------------- 启动 ---------------- */
+  buildPoints();
+  resize();
+  makeParticles();
+  nextMeteor = performance.now() + 2500;
+  rafId = requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
