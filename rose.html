@@ -34,10 +34,35 @@
     background: radial-gradient(circle at 50% 46%,
       rgba(255, 110, 145, .8), rgba(255, 60, 100, .22) 40%, transparent 66%);
   }
+  /* 献词落款 */
+  .dedication {
+    position: fixed;
+    left: 0; right: 0;
+    bottom: calc(7% + env(safe-area-inset-bottom));
+    z-index: 2;
+    text-align: center;
+    pointer-events: none;
+    font-family: Georgia, "Times New Roman", serif;
+    font-style: italic;
+    font-weight: 400;
+    font-size: clamp(14px, 3.8vw, 19px);
+    letter-spacing: .18em;
+    color: rgba(255, 214, 224, .85);
+    text-shadow:
+      0 0 12px rgba(255, 80, 120, .55),
+      0 0 34px rgba(255, 80, 120, .28);
+    opacity: 0;
+    animation: dedicationIn 3s ease 2.8s forwards;
+  }
+  @keyframes dedicationIn {
+    from { opacity: 0; transform: translateY(10px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
 </style>
 </head>
 <body>
 <div id="flash"></div>
+<div class="dedication">Dedicated to YuQi</div>
 <noscript>需要启用 JavaScript 才能观看量子玫瑰。</noscript>
 
 <script src="./lib/three.min.js"></script>
