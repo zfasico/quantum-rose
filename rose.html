@@ -309,7 +309,7 @@
     .then(function (data) {
       var meta = data.meta;
       TOTAL = meta.count;
-      LIVE = mobile ? Math.floor(TOTAL * 0.6) : TOTAL;
+      LIVE = TOTAL; /* 点云已随机打散，全量渲染保持结构完整 */
 
       basePos = new Float32Array(data.p);
       colArr = new Float32Array(data.c);
